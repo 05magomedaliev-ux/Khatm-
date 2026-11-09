@@ -8,7 +8,7 @@ import { addMemberSchema, cardSchema, memberUpdateSchema, notificationsSchema, p
 import { currentUser } from '../http/telegramAuth.js';
 import { isAdmin, requireAdmin, requireMember } from '../services/access.js';
 import { loadGroup, type GroupData } from '../services/analytics.js';
-import { RecipientUnavailable } from '../services/messenger.js';
+import { RecipientUnavailable, TopicUnavailable } from '../services/messenger.js';
 import { syncAchievements } from '../services/reports.js';
 
 const hhmm = (time: string) => time.slice(0, 5);
@@ -239,7 +239,7 @@ export function adminRoutes(router: Router, deps: Deps): void {
     const user = currentUser(res);
     await database.withUser(user.id, async (db) => {
       await requireAdmin(db, groupId, user.id);
-      await db.query('update public.groups set telegram_chat_id = null, telegram_chat_title = null where id = $1', [groupId]);
+      await db.query('update public.groups set telegram_chat_id = null, telegram_chat_title = null, telegram_thread_id = null where id = $1', [groupId]);
     });
     res.status(204).end();
   }));
@@ -254,6 +254,9 @@ export function adminRoutes(router: Router, deps: Deps): void {
     } catch (error) {
       if (error instanceof RecipientUnavailable) {
         throw new HttpError(409, 'chat_unavailable', 'Бот не может писать в этот чат. Проверьте, что он добавлен и ему разрешено отправлять сообщения.');
+      }
+      if (error instanceof TopicUnavailable) {
+        throw new HttpError(409, 'topic_unavailable', 'Эта тема чата закрыта. Отправьте /stats в теме, куда нужно присылать итоги, и нажмите кнопку ещё раз.');
       }
       console.error('Не удалось опубликовать статистику', error);
       // Кнопку видит только администратор: ему нужна настоящая причина, а не общая фраза.

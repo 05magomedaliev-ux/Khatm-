@@ -78,10 +78,17 @@ export class Notifications {
   }
 
   /** При переходе чата в супергруппу Telegram меняет его id: запоминаем новый и отправляем туда. */
-  private async sendToChat(groupId: string, chatId: number, html: string, button?: MessageButton, image?: Buffer): Promise<void> {
-    const deliver = (id: number) => (image ? this.messenger.sendPhoto(id, image, html, button) : this.messenger.send(id, html, button));
+  private async sendToChat(
+    groupId: string,
+    chat: { id: number; threadId: number | null },
+    html: string,
+    button?: MessageButton,
+    image?: Buffer,
+  ): Promise<void> {
+    const thread = chat.threadId ?? undefined;
+    const deliver = (id: number) => (image ? this.messenger.sendPhoto(id, image, html, button, thread) : this.messenger.send(id, html, button, thread));
     try {
-      await deliver(chatId);
+      await deliver(chat.id);
     } catch (error) {
       if (!(error instanceof ChatMigrated)) throw error;
       await this.database.withSystem((db) => db.query('update public.groups set telegram_chat_id = $2 where id = $1', [groupId, error.newChatId]));
@@ -93,7 +100,7 @@ export class Notifications {
     const data = await this.database.withSystem((db) => loadGroup(db, groupId));
     if (!data?.group.telegram_chat_id) return false;
     const report = await buildDayReport(data, 'Итоги дня');
-    await this.sendToChat(groupId, data.group.telegram_chat_id, report.html, this.chatButton(), report.image);
+    await this.sendToChat(groupId, { id: data.group.telegram_chat_id, threadId: data.group.telegram_thread_id }, report.html, this.chatButton(), report.image);
     return true;
   }
 
@@ -107,7 +114,7 @@ export class Notifications {
     const claimed = await this.database.withSystem(async (db) => {
       const { rows } = await db.query<{
         id: string; code: string; group_id: string; member_id: string; display_name: string;
-        telegram_id: number | null; bot_blocked: boolean | null; enabled: boolean | null; chat_id: number | null;
+        telegram_id: number | null; bot_blocked: boolean | null; enabled: boolean | null; chat_id: number | null; thread_id: number | null;
       }>(
         `update public.achievements a set notified_at = now()
          from public.group_members m
@@ -120,7 +127,7 @@ export class Notifications {
            order by earned_at limit 100 for update skip locked
          ) and m.id = a.member_id
          returning a.id, a.code, a.group_id, a.member_id, m.display_name, u.telegram_id, u.bot_blocked,
-                   s.achievements_enabled as enabled, g.telegram_chat_id as chat_id`,
+                   s.achievements_enabled as enabled, g.telegram_chat_id as chat_id, g.telegram_thread_id as thread_id`,
       );
       return rows;
     });
@@ -132,7 +139,7 @@ export class Notifications {
         await this.sendPrivate(row.telegram_id, `<b>Новое достижение</b>\n${escapeHtml(def.title)}. ${escapeHtml(def.description)}.`);
       }
       if (row.chat_id) {
-        await this.sendToChat(row.group_id, row.chat_id, `${escapeHtml(row.display_name)} получает достижение «${escapeHtml(def.title)}».`)
+        await this.sendToChat(row.group_id, { id: row.chat_id, threadId: row.thread_id }, `${escapeHtml(row.display_name)} получает достижение «${escapeHtml(def.title)}».`)
           .catch((e) => console.error('Не удалось отправить в чат группы', e));
       }
     }
@@ -209,7 +216,7 @@ export class Notifications {
     const report = await buildDayReport(data, 'Итоги дня');
     if (group.telegram_chat_id) {
       const claimed = await this.database.withSystem((db) => this.claim(db, 'daily_report', group.id, null, data.today));
-      if (claimed) await this.sendToChat(group.id, group.telegram_chat_id, report.html, this.chatButton(), report.image);
+      if (claimed) await this.sendToChat(group.id, { id: group.telegram_chat_id, threadId: group.telegram_thread_id }, report.html, this.chatButton(), report.image);
       return;
     }
     for (const recipient of recipients) {

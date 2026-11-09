@@ -4,13 +4,14 @@ import type { Config } from '../config.js';
 import type { Database, Db } from '../db.js';
 import { inviteLink } from '../http/app.js';
 import { loadGroup, type GroupData } from '../services/analytics.js';
-import { ChatMigrated, RecipientUnavailable, type MessageButton, type Messenger } from '../services/messenger.js';
+import { ChatMigrated, RecipientUnavailable, TopicUnavailable, type MessageButton, type Messenger } from '../services/messenger.js';
 import { buildDayReport, escapeHtml } from '../services/notifications.js';
 
 function translate(error: unknown): never {
   if (error instanceof GrammyError) {
     const migrated = error.parameters?.migrate_to_chat_id;
     if (migrated) throw new ChatMigrated(migrated);
+    if (/TOPIC_CLOSED|TOPIC_DELETED|message thread not found/i.test(error.description)) throw new TopicUnavailable(error.description);
     if (error.error_code === 403 || (error.error_code === 400 && /chat not found|not enough rights|CHAT_WRITE_FORBIDDEN/i.test(error.description))) {
       throw new RecipientUnavailable(error.description);
     }
@@ -28,15 +29,15 @@ function keyboard(button?: MessageButton): InlineKeyboard | undefined {
 export class TelegramMessenger implements Messenger {
   constructor(private bot: Bot) {}
 
-  async send(chatId: number, html: string, button?: MessageButton): Promise<void> {
+  async send(chatId: number, html: string, button?: MessageButton, threadId?: number): Promise<void> {
     await this.bot.api
-      .sendMessage(chatId, html, { parse_mode: 'HTML', reply_markup: keyboard(button), link_preview_options: { is_disabled: true } })
+      .sendMessage(chatId, html, { parse_mode: 'HTML', reply_markup: keyboard(button), link_preview_options: { is_disabled: true }, message_thread_id: threadId })
       .catch(translate);
   }
 
-  async sendPhoto(chatId: number, image: Buffer, caption: string, button?: MessageButton): Promise<void> {
+  async sendPhoto(chatId: number, image: Buffer, caption: string, button?: MessageButton, threadId?: number): Promise<void> {
     await this.bot.api
-      .sendPhoto(chatId, new InputFile(image, 'khatm-card.jpg'), { caption, parse_mode: 'HTML', reply_markup: keyboard(button) })
+      .sendPhoto(chatId, new InputFile(image, 'khatm-card.jpg'), { caption, parse_mode: 'HTML', reply_markup: keyboard(button), message_thread_id: threadId })
       .catch(translate);
   }
 }
@@ -154,8 +155,16 @@ export function registerBot(bot: Bot, config: Config, database: Database): void 
   bot.command('stats', async (ctx) => {
     if (!isPrivate(ctx.chat.type)) {
       const data = await database.withSystem(async (db) => {
-        const { rows } = await db.query<{ id: string }>('select id from public.groups where telegram_chat_id = $1', [ctx.chat.id]);
-        return rows[0] ? loadGroup(db, rows[0].id) : null;
+        const { rows } = await db.query<{ id: string; telegram_thread_id: number | null }>(
+          'select id, telegram_thread_id from public.groups where telegram_chat_id = $1',
+          [ctx.chat.id],
+        );
+        if (!rows[0]) return null;
+        // Первая тема, где запросили статистику, становится темой для публикаций.
+        if (rows[0].telegram_thread_id === null && ctx.msg?.is_topic_message) {
+          await db.query('update public.groups set telegram_thread_id = $2 where id = $1', [rows[0].id, ctx.msg.message_thread_id]);
+        }
+        return loadGroup(db, rows[0].id);
       });
       if (!data) {
         await ctx.reply('Этот чат ещё не подключён к группе. Код подключения есть в настройках группы.');
@@ -220,9 +229,9 @@ export function registerBot(bot: Bot, config: Config, database: Database): void 
     }
     const linked = await database.withSystem(async (db) => {
       const { rows } = await db.query<{ name: string }>(
-        `update public.groups set telegram_chat_id = $1, telegram_chat_title = $2, link_code = null
+        `update public.groups set telegram_chat_id = $1, telegram_chat_title = $2, telegram_thread_id = $4, link_code = null
          where link_code = $3 returning name`,
-        [ctx.chat.id, 'title' in ctx.chat ? ctx.chat.title : null, code],
+        [ctx.chat.id, 'title' in ctx.chat ? ctx.chat.title : null, code, ctx.msg?.is_topic_message ? ctx.msg.message_thread_id : null],
       );
       return rows[0];
     });

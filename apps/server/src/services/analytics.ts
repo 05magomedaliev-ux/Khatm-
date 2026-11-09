@@ -14,6 +14,7 @@ export interface GroupRow {
   reports_enabled: boolean;
   telegram_chat_id: number | null;
   telegram_chat_title: string | null;
+  telegram_thread_id: number | null;
   link_code: string | null;
 }
 

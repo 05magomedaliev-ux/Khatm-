@@ -17,13 +17,13 @@ export function signInitData(user: Record<string, unknown>, authDate = Math.floo
 }
 
 export class RecordingMessenger implements Messenger {
-  sent: { chatId: number; html: string; button?: MessageButton }[] = [];
-  photos: { chatId: number; image: Buffer; caption: string; button?: MessageButton }[] = [];
-  async send(chatId: number, html: string, button?: MessageButton): Promise<void> {
-    this.sent.push({ chatId, html, button });
+  sent: { chatId: number; html: string; button?: MessageButton; threadId?: number }[] = [];
+  photos: { chatId: number; image: Buffer; caption: string; button?: MessageButton; threadId?: number }[] = [];
+  async send(chatId: number, html: string, button?: MessageButton, threadId?: number): Promise<void> {
+    this.sent.push({ chatId, html, button, threadId });
   }
-  async sendPhoto(chatId: number, image: Buffer, caption: string, button?: MessageButton): Promise<void> {
-    this.photos.push({ chatId, image, caption, button });
+  async sendPhoto(chatId: number, image: Buffer, caption: string, button?: MessageButton, threadId?: number): Promise<void> {
+    this.photos.push({ chatId, image, caption, button, threadId });
   }
 }
 

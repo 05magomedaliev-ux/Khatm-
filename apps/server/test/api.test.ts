@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
 import { validateInitData } from '../src/http/telegramAuth.js';
-import { ChatMigrated, RecipientUnavailable } from '../src/services/messenger.js';
+import { ChatMigrated, RecipientUnavailable, TopicUnavailable } from '../src/services/messenger.js';
 import { BOT_TOKEN, client, signInitData, startHarness, telegramIdBase, type Client, type Harness } from './helpers.js';
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
@@ -384,8 +384,19 @@ describe('Хатм: пять участников', { skip: !DATABASE_URL }, () 
     assert.equal(failed.status, 502);
     assert.match(failed.body.error.message, /тестовая причина/, 'администратор видит настоящую причину');
 
+    h.messenger.sendPhoto = async () => {
+      throw new TopicUnavailable('TOPIC_CLOSED');
+    };
+    const closed = await members[0].call('POST', path, {});
+    assert.equal(closed.status, 409);
+    assert.equal(closed.body.error.code, 'topic_unavailable');
+
     h.messenger.sendPhoto = original;
-    await h.database.withSystem((db) => db.query('update public.groups set telegram_chat_id = null where id = $1', [groupId]));
+    await h.database.withSystem((db) => db.query('update public.groups set telegram_thread_id = 77 where id = $1', [groupId]));
+    h.messenger.photos.length = 0;
+    assert.equal((await members[0].call('POST', path, {})).status, 200);
+    assert.equal(h.messenger.photos[0].threadId, 77, 'публикация идёт в выбранную тему');
+    await h.database.withSystem((db) => db.query('update public.groups set telegram_chat_id = null, telegram_thread_id = null where id = $1', [groupId]));
   });
 
   test('персональные настройки уведомлений', async () => {
