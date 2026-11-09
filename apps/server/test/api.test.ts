@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
 import { validateInitData } from '../src/http/telegramAuth.js';
-import { RecipientUnavailable } from '../src/services/messenger.js';
+import { ChatMigrated, RecipientUnavailable } from '../src/services/messenger.js';
 import { BOT_TOKEN, client, signInitData, startHarness, telegramIdBase, type Client, type Harness } from './helpers.js';
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL;
@@ -344,6 +344,37 @@ describe('Хатм: пять участников', { skip: !DATABASE_URL }, () 
     const flagged = await h.database.withSystem(async (db) => (await db.query('select bot_blocked from public.users where telegram_id = $1', [blockedId])).rows[0].bot_blocked);
     assert.equal(flagged, true);
     await h.database.withSystem((db) => db.query('update public.users set bot_blocked = false where telegram_id = $1', [blockedId]));
+  });
+
+  test('публикация в чат: смена id при переходе в супергруппу и понятная ошибка', async () => {
+    const path = `/groups/${groupId}/publish-stats`;
+    const oldId = -Math.floor(Math.random() * 1e9) - 1;
+    const newId = -1_000_000_000_000 - Math.floor(Math.random() * 1e9);
+    assert.equal((await members[0].call('POST', path, {})).body.error.code, 'chat_not_linked');
+    await h.database.withSystem((db) => db.query('update public.groups set telegram_chat_id = $2 where id = $1', [groupId, oldId]));
+
+    const original = h.messenger.send.bind(h.messenger);
+    h.messenger.send = async (chatId, html, button) => {
+      if (chatId === oldId) throw new ChatMigrated(newId);
+      return original(chatId, html, button);
+    };
+    h.messenger.sent.length = 0;
+    const published = await members[0].call('POST', path, {});
+    assert.equal(published.status, 200);
+    assert.equal(h.messenger.sent[0].chatId, newId);
+    assert.match(h.messenger.sent[0].html, /Статистика группы/);
+    const stored = await h.database.withSystem(async (db) => (await db.query('select telegram_chat_id from public.groups where id = $1', [groupId])).rows[0].telegram_chat_id);
+    assert.equal(Number(stored), newId);
+
+    h.messenger.send = async () => {
+      throw new RecipientUnavailable('bot was kicked');
+    };
+    const refused = await members[0].call('POST', path, {});
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.error.code, 'chat_unavailable');
+
+    h.messenger.send = original;
+    await h.database.withSystem((db) => db.query('update public.groups set telegram_chat_id = null where id = $1', [groupId]));
   });
 
   test('персональные настройки уведомлений', async () => {

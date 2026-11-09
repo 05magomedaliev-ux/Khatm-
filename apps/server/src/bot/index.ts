@@ -4,12 +4,16 @@ import type { Config } from '../config.js';
 import type { Database, Db } from '../db.js';
 import { inviteLink } from '../http/app.js';
 import { loadGroup } from '../services/analytics.js';
-import { RecipientUnavailable, type MessageButton, type Messenger } from '../services/messenger.js';
+import { ChatMigrated, RecipientUnavailable, type MessageButton, type Messenger } from '../services/messenger.js';
 import { escapeHtml, formatGroupStats } from '../services/notifications.js';
 
 function translate(error: unknown): never {
-  if (error instanceof GrammyError && (error.error_code === 403 || (error.error_code === 400 && /chat not found/i.test(error.description)))) {
-    throw new RecipientUnavailable(error.description);
+  if (error instanceof GrammyError) {
+    const migrated = error.parameters?.migrate_to_chat_id;
+    if (migrated) throw new ChatMigrated(migrated);
+    if (error.error_code === 403 || (error.error_code === 400 && /chat not found|not enough rights|CHAT_WRITE_FORBIDDEN/i.test(error.description))) {
+      throw new RecipientUnavailable(error.description);
+    }
   }
   throw error;
 }

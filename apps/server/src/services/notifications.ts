@@ -2,7 +2,7 @@ import { achievementByCode, localMinutes, timeToMinutes } from '@khatm/shared';
 import type { Config } from '../config.js';
 import type { Database, Db } from '../db.js';
 import { loadGroup, progressOf, summarizeToday, type GroupData, type GroupRow } from './analytics.js';
-import { RecipientUnavailable, type Messenger } from './messenger.js';
+import { ChatMigrated, RecipientUnavailable, type MessageButton, type Messenger } from './messenger.js';
 
 /** Сколько минут после назначенного времени рассылка ещё считается актуальной. */
 const SEND_WINDOW_MINUTES = 120;
@@ -64,10 +64,21 @@ export class Notifications {
     }
   }
 
+  /** При переходе чата в супергруппу Telegram меняет его id: запоминаем новый и отправляем туда. */
+  private async sendToChat(groupId: string, chatId: number, html: string, button?: MessageButton): Promise<void> {
+    try {
+      await this.messenger.send(chatId, html, button);
+    } catch (error) {
+      if (!(error instanceof ChatMigrated)) throw error;
+      await this.database.withSystem((db) => db.query('update public.groups set telegram_chat_id = $2 where id = $1', [groupId, error.newChatId]));
+      await this.messenger.send(error.newChatId, html, button);
+    }
+  }
+
   async publishStats(groupId: string): Promise<boolean> {
     const data = await this.database.withSystem((db) => loadGroup(db, groupId));
     if (!data?.group.telegram_chat_id) return false;
-    await this.messenger.send(data.group.telegram_chat_id, formatGroupStats(data, 'Статистика группы'), this.chatButton());
+    await this.sendToChat(groupId, data.group.telegram_chat_id, formatGroupStats(data, 'Статистика группы'), this.chatButton());
     return true;
   }
 
@@ -106,8 +117,7 @@ export class Notifications {
         await this.sendPrivate(row.telegram_id, `<b>Новое достижение</b>\n${escapeHtml(def.title)}. ${escapeHtml(def.description)}.`);
       }
       if (row.chat_id) {
-        await this.messenger
-          .send(row.chat_id, `${escapeHtml(row.display_name)} получает достижение «${escapeHtml(def.title)}».`)
+        await this.sendToChat(row.group_id, row.chat_id, `${escapeHtml(row.display_name)} получает достижение «${escapeHtml(def.title)}».`)
           .catch((e) => console.error('Не удалось отправить в чат группы', e));
       }
     }
@@ -184,7 +194,7 @@ export class Notifications {
     const text = formatGroupStats(data, 'Итоги дня');
     if (group.telegram_chat_id) {
       const claimed = await this.database.withSystem((db) => this.claim(db, 'daily_report', group.id, null, data.today));
-      if (claimed) await this.messenger.send(group.telegram_chat_id, text, this.chatButton());
+      if (claimed) await this.sendToChat(group.id, group.telegram_chat_id, text, this.chatButton());
       return;
     }
     for (const recipient of recipients) {

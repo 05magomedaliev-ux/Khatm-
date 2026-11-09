@@ -248,7 +248,15 @@ export function adminRoutes(router: Router, deps: Deps): void {
     const groupId = param(req, 'gid');
     const user = currentUser(res);
     await database.withUser(user.id, (db) => requireAdmin(db, groupId, user.id));
-    const sent = await deps.notifications.publishStats(groupId);
+    let sent: boolean;
+    try {
+      sent = await deps.notifications.publishStats(groupId);
+    } catch (error) {
+      if (error instanceof RecipientUnavailable) {
+        throw new HttpError(409, 'chat_unavailable', 'Бот не может писать в этот чат. Проверьте, что он добавлен и ему разрешено отправлять сообщения.');
+      }
+      throw error;
+    }
     if (!sent) throw new HttpError(409, 'chat_not_linked', 'Сначала подключите чат группы.');
     res.json({ sent });
   }));

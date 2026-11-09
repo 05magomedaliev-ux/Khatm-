@@ -14,6 +14,13 @@ export interface Messenger {
 /** Пользователь не запускал бота или заблокировал его. */
 export class RecipientUnavailable extends Error {}
 
+/** Telegram сменил id чата: обычная группа стала супергруппой. */
+export class ChatMigrated extends Error {
+  constructor(public newChatId: number) {
+    super('Чат переведён в супергруппу');
+  }
+}
+
 export class NullMessenger implements Messenger {
   async send(): Promise<void> {}
   async sendPhoto(): Promise<void> {}
