@@ -1,0 +1,20 @@
+name: unpack
+on:
+  push:
+    paths:
+      - .github/workflows/unpack.yml
+permissions:
+  contents: write
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          unzip -o khatm-nash-put.zip -x '.github/*'
+          git rm -q khatm-nash-put.zip
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git add -A
+          git commit -m "Загрузка проекта"
+          git push
