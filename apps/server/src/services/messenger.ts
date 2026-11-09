@@ -8,7 +8,7 @@ export interface MessageButton {
 
 export interface Messenger {
   send(chatId: number, html: string, button?: MessageButton): Promise<void>;
-  sendPhoto(chatId: number, image: Buffer, caption: string): Promise<void>;
+  sendPhoto(chatId: number, image: Buffer, caption: string, button?: MessageButton): Promise<void>;
 }
 
 /** Пользователь не запускал бота или заблокировал его. */

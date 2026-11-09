@@ -308,6 +308,7 @@ describe('Хатм: пять участников', { skip: !DATABASE_URL }, () 
 
   test('напоминания: только тем, кто не выполнил норму, по времени группы, один раз', async () => {
     h.messenger.sent.length = 0;
+    h.messenger.photos.length = 0;
     await h.database.withSystem((db) => db.query(`update public.groups set reminder_time = '00:00', report_time = '00:00' where id = $1`, [groupId]));
     const now = new Date(`${today}T12:00:00+03:00`);
     const noon = new Date(`${today}T00:30:00+03:00`);
@@ -317,18 +318,20 @@ describe('Хатм: пять участников', { skip: !DATABASE_URL }, () 
     assert.ok(!reminders.some((m) => m.chatId === members[0].tgId), 'Мурад уже выполнил норму');
     assert.equal(reminders[0].button?.webAppUrl, 'https://example.test/app');
 
-    const reports = h.messenger.sent.filter((m) => m.html.includes('Итоги дня'));
-    assert.equal(reports.length, 5, 'чат не подключён: итоги приходят в личные сообщения');
-    assert.ok(!reports[0].html.includes('Марат'), 'итоги не называют тех, кто не выполнил норму');
+    const reports = h.messenger.photos.filter((m) => m.caption.includes('Итоги дня'));
+    assert.equal(reports.length, 5, 'чат не подключён: итоги приходят картинкой в личные сообщения');
+    assert.deepEqual([...reports[0].image.subarray(0, 2)], [0xff, 0xd8], 'итоги дня — изображение JPEG');
+    assert.ok(!reports[0].caption.includes('Марат'), 'подпись никого не выделяет');
 
-    const total = h.messenger.sent.length;
+    const total = h.messenger.sent.length + h.messenger.photos.length;
     await h.notifications.tick(noon);
-    assert.equal(h.messenger.sent.length, total);
+    assert.equal(h.messenger.sent.length + h.messenger.photos.length, total);
 
     await h.database.withSystem((db) => db.query('delete from public.notification_log where group_id = $1', [groupId]));
     h.messenger.sent.length = 0;
+    h.messenger.photos.length = 0;
     await h.notifications.tick(now);
-    assert.equal(h.messenger.sent.length, 0, 'вне окна рассылки ничего не отправляется');
+    assert.equal(h.messenger.sent.length + h.messenger.photos.length, 0, 'вне окна рассылки ничего не отправляется');
   });
 
   test('заблокировавший бота больше не получает сообщений', async () => {
@@ -353,27 +356,35 @@ describe('Хатм: пять участников', { skip: !DATABASE_URL }, () 
     assert.equal((await members[0].call('POST', path, {})).body.error.code, 'chat_not_linked');
     await h.database.withSystem((db) => db.query('update public.groups set telegram_chat_id = $2 where id = $1', [groupId, oldId]));
 
-    const original = h.messenger.send.bind(h.messenger);
-    h.messenger.send = async (chatId, html, button) => {
+    const original = h.messenger.sendPhoto.bind(h.messenger);
+    h.messenger.sendPhoto = async (chatId, image, caption, button) => {
       if (chatId === oldId) throw new ChatMigrated(newId);
-      return original(chatId, html, button);
+      return original(chatId, image, caption, button);
     };
-    h.messenger.sent.length = 0;
+    h.messenger.photos.length = 0;
     const published = await members[0].call('POST', path, {});
     assert.equal(published.status, 200);
-    assert.equal(h.messenger.sent[0].chatId, newId);
-    assert.match(h.messenger.sent[0].html, /Статистика группы/);
+    assert.equal(h.messenger.photos[0].chatId, newId);
+    assert.match(h.messenger.photos[0].caption, /Итоги дня/);
+    assert.ok(h.messenger.photos[0].button?.url, 'в чате кнопка-ссылка');
     const stored = await h.database.withSystem(async (db) => (await db.query('select telegram_chat_id from public.groups where id = $1', [groupId])).rows[0].telegram_chat_id);
     assert.equal(Number(stored), newId);
 
-    h.messenger.send = async () => {
+    h.messenger.sendPhoto = async () => {
       throw new RecipientUnavailable('bot was kicked');
     };
     const refused = await members[0].call('POST', path, {});
     assert.equal(refused.status, 409);
     assert.equal(refused.body.error.code, 'chat_unavailable');
 
-    h.messenger.send = original;
+    h.messenger.sendPhoto = async () => {
+      throw new Error("Call to 'sendPhoto' failed! (400: Bad Request: тестовая причина)");
+    };
+    const failed = await members[0].call('POST', path, {});
+    assert.equal(failed.status, 502);
+    assert.match(failed.body.error.message, /тестовая причина/, 'администратор видит настоящую причину');
+
+    h.messenger.sendPhoto = original;
     await h.database.withSystem((db) => db.query('update public.groups set telegram_chat_id = null where id = $1', [groupId]));
   });
 
@@ -391,6 +402,7 @@ describe('Хатм: пять участников', { skip: !DATABASE_URL }, () 
   test('карточка отправляется в личный чат', async () => {
     const path = `/groups/${groupId}/card`;
     const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(200, 1)]).toString('base64');
+    h.messenger.photos.length = 0;
     assert.equal((await members[0].call('POST', path, { imageBase64: jpeg })).status, 200);
     assert.equal(h.messenger.photos[0].chatId, members[0].tgId);
     assert.equal((await members[0].call('POST', path, { imageBase64: Buffer.alloc(200, 1).toString('base64') })).status, 422);

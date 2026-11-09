@@ -2,6 +2,7 @@ import { achievementByCode, localMinutes, timeToMinutes } from '@khatm/shared';
 import type { Config } from '../config.js';
 import type { Database, Db } from '../db.js';
 import { loadGroup, progressOf, summarizeToday, type GroupData, type GroupRow } from './analytics.js';
+import { renderDayCard } from './daycard/render.js';
 import { ChatMigrated, RecipientUnavailable, type MessageButton, type Messenger } from './messenger.js';
 
 /** Сколько минут после назначенного времени рассылка ещё считается актуальной. */
@@ -35,6 +36,17 @@ export function formatGroupStats(data: GroupData, heading: string): string {
   return lines.join('\n');
 }
 
+/** Итоги дня картинкой. Если нарисовать её не удалось, итоги уходят обычным текстом. */
+export async function buildDayReport(data: GroupData, heading: string): Promise<{ html: string; image?: Buffer }> {
+  try {
+    const image = await renderDayCard(data);
+    return { image, html: `<b>${escapeHtml(heading)}</b>\nГруппа «${escapeHtml(data.group.name)}», ${formatDayMonth(data.today)}` };
+  } catch (error) {
+    console.error('Не удалось нарисовать итоги дня', error);
+    return { html: formatGroupStats(data, heading) };
+  }
+}
+
 export class Notifications {
   constructor(
     private database: Database,
@@ -50,9 +62,10 @@ export class Notifications {
     return { text, url: `https://t.me/${this.config.BOT_USERNAME}?start=open` };
   }
 
-  private async sendPrivate(telegramId: number, html: string, buttonText?: string): Promise<boolean> {
+  private async sendPrivate(telegramId: number, html: string, buttonText?: string, image?: Buffer): Promise<boolean> {
     try {
-      await this.messenger.send(telegramId, html, this.privateButton(buttonText));
+      if (image) await this.messenger.sendPhoto(telegramId, image, html, this.privateButton(buttonText));
+      else await this.messenger.send(telegramId, html, this.privateButton(buttonText));
       return true;
     } catch (error) {
       if (error instanceof RecipientUnavailable) {
@@ -65,20 +78,22 @@ export class Notifications {
   }
 
   /** При переходе чата в супергруппу Telegram меняет его id: запоминаем новый и отправляем туда. */
-  private async sendToChat(groupId: string, chatId: number, html: string, button?: MessageButton): Promise<void> {
+  private async sendToChat(groupId: string, chatId: number, html: string, button?: MessageButton, image?: Buffer): Promise<void> {
+    const deliver = (id: number) => (image ? this.messenger.sendPhoto(id, image, html, button) : this.messenger.send(id, html, button));
     try {
-      await this.messenger.send(chatId, html, button);
+      await deliver(chatId);
     } catch (error) {
       if (!(error instanceof ChatMigrated)) throw error;
       await this.database.withSystem((db) => db.query('update public.groups set telegram_chat_id = $2 where id = $1', [groupId, error.newChatId]));
-      await this.messenger.send(error.newChatId, html, button);
+      await deliver(error.newChatId);
     }
   }
 
   async publishStats(groupId: string): Promise<boolean> {
     const data = await this.database.withSystem((db) => loadGroup(db, groupId));
     if (!data?.group.telegram_chat_id) return false;
-    await this.sendToChat(groupId, data.group.telegram_chat_id, formatGroupStats(data, 'Статистика группы'), this.chatButton());
+    const report = await buildDayReport(data, 'Итоги дня');
+    await this.sendToChat(groupId, data.group.telegram_chat_id, report.html, this.chatButton(), report.image);
     return true;
   }
 
@@ -191,16 +206,16 @@ export class Notifications {
     }
 
     if (!reportDue) return;
-    const text = formatGroupStats(data, 'Итоги дня');
+    const report = await buildDayReport(data, 'Итоги дня');
     if (group.telegram_chat_id) {
       const claimed = await this.database.withSystem((db) => this.claim(db, 'daily_report', group.id, null, data.today));
-      if (claimed) await this.sendToChat(group.id, group.telegram_chat_id, text, this.chatButton());
+      if (claimed) await this.sendToChat(group.id, group.telegram_chat_id, report.html, this.chatButton(), report.image);
       return;
     }
     for (const recipient of recipients) {
       if (recipient.daily_report_enabled === false) continue;
       const claimed = await this.database.withSystem((db) => this.claim(db, 'daily_report', group.id, recipient.member_id, data.today));
-      if (claimed) await this.sendPrivate(recipient.telegram_id, text);
+      if (claimed) await this.sendPrivate(recipient.telegram_id, report.html, undefined, report.image);
     }
   }
 }

@@ -3,9 +3,9 @@ import { randomBytes } from 'node:crypto';
 import type { Config } from '../config.js';
 import type { Database, Db } from '../db.js';
 import { inviteLink } from '../http/app.js';
-import { loadGroup } from '../services/analytics.js';
+import { loadGroup, type GroupData } from '../services/analytics.js';
 import { ChatMigrated, RecipientUnavailable, type MessageButton, type Messenger } from '../services/messenger.js';
-import { escapeHtml, formatGroupStats } from '../services/notifications.js';
+import { buildDayReport, escapeHtml } from '../services/notifications.js';
 
 function translate(error: unknown): never {
   if (error instanceof GrammyError) {
@@ -34,8 +34,10 @@ export class TelegramMessenger implements Messenger {
       .catch(translate);
   }
 
-  async sendPhoto(chatId: number, image: Buffer, caption: string): Promise<void> {
-    await this.bot.api.sendPhoto(chatId, new InputFile(image, 'khatm-card.jpg'), { caption }).catch(translate);
+  async sendPhoto(chatId: number, image: Buffer, caption: string, button?: MessageButton): Promise<void> {
+    await this.bot.api
+      .sendPhoto(chatId, new InputFile(image, 'khatm-card.jpg'), { caption, parse_mode: 'HTML', reply_markup: keyboard(button) })
+      .catch(translate);
   }
 }
 
@@ -151,27 +153,42 @@ export function registerBot(bot: Bot, config: Config, database: Database): void 
 
   bot.command('stats', async (ctx) => {
     if (!isPrivate(ctx.chat.type)) {
-      const text = await database.withSystem(async (db) => {
+      const data = await database.withSystem(async (db) => {
         const { rows } = await db.query<{ id: string }>('select id from public.groups where telegram_chat_id = $1', [ctx.chat.id]);
-        if (!rows[0]) return null;
-        const data = await loadGroup(db, rows[0].id);
-        return data ? formatGroupStats(data, 'Статистика группы') : null;
+        return rows[0] ? loadGroup(db, rows[0].id) : null;
       });
-      await ctx.reply(text ?? 'Этот чат ещё не подключён к группе. Код подключения есть в настройках группы.', {
-        parse_mode: 'HTML',
-        reply_markup: text ? openFromChat() : undefined,
-      });
+      if (!data) {
+        await ctx.reply('Этот чат ещё не подключён к группе. Код подключения есть в настройках группы.');
+        return;
+      }
+      const report = await buildDayReport(data, 'Статистика группы');
+      if (report.image) {
+        await ctx.replyWithPhoto(new InputFile(report.image, 'khatm-day.jpg'), { caption: report.html, parse_mode: 'HTML', reply_markup: openFromChat() });
+      } else {
+        await ctx.reply(report.html, { parse_mode: 'HTML', reply_markup: openFromChat() });
+      }
       return;
     }
-    const texts = await database.withSystem(async (db) => {
-      const out: string[] = [];
+    const groups = await database.withSystem(async (db) => {
+      const out: GroupData[] = [];
       for (const group of await groupsOf(db, ctx.from!.id)) {
         const data = await loadGroup(db, group.group_id);
-        if (data) out.push(formatGroupStats(data, 'Статистика группы'));
+        if (data) out.push(data);
       }
       return out;
     });
-    await ctx.reply(texts.join('\n\n') || 'Вы пока не состоите в группе.', { parse_mode: 'HTML', reply_markup: openInPrivate() });
+    if (groups.length === 0) {
+      await ctx.reply('Вы пока не состоите в группе.', { reply_markup: openInPrivate() });
+      return;
+    }
+    for (const data of groups) {
+      const report = await buildDayReport(data, 'Статистика группы');
+      if (report.image) {
+        await ctx.replyWithPhoto(new InputFile(report.image, 'khatm-day.jpg'), { caption: report.html, parse_mode: 'HTML', reply_markup: openInPrivate() });
+      } else {
+        await ctx.reply(report.html, { parse_mode: 'HTML', reply_markup: openInPrivate() });
+      }
+    }
   });
 
   bot.command('today', async (ctx) => {

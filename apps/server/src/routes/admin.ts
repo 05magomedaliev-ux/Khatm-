@@ -255,7 +255,10 @@ export function adminRoutes(router: Router, deps: Deps): void {
       if (error instanceof RecipientUnavailable) {
         throw new HttpError(409, 'chat_unavailable', 'Бот не может писать в этот чат. Проверьте, что он добавлен и ему разрешено отправлять сообщения.');
       }
-      throw error;
+      console.error('Не удалось опубликовать статистику', error);
+      // Кнопку видит только администратор: ему нужна настоящая причина, а не общая фраза.
+      const reason = error instanceof Error ? error.message.slice(0, 200) : 'неизвестная ошибка';
+      throw new HttpError(502, 'publish_failed', `Не удалось опубликовать: ${reason}`);
     }
     if (!sent) throw new HttpError(409, 'chat_not_linked', 'Сначала подключите чат группы.');
     res.json({ sent });
