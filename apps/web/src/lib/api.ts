@@ -90,6 +90,8 @@ export const api = {
     memberId: string,
     input: { status?: MemberStatus; role?: MemberRole; startedOn?: string; displayName?: string },
   ) => request<void>('PATCH', `${g(groupId)}/members/${memberId}`, input),
+  setPagesBefore: (groupId: string, memberId: string, pages: number) =>
+    request<{ pagesBefore: number; totalPages: number }>('PATCH', `${g(groupId)}/members/${memberId}/pages-before`, { pages }),
   createLinkCode: (groupId: string) => request<{ linkCode: string }>('POST', `${g(groupId)}/link-code`, {}),
   unlinkChat: (groupId: string) => request<void>('DELETE', `${g(groupId)}/chat`),
   publishStats: (groupId: string) => request<{ sent: boolean }>('POST', `${g(groupId)}/publish-stats`, {}),

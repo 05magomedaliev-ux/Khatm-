@@ -23,14 +23,14 @@ export interface RangeOverlap {
  * Отчёты текущего круга чтения: всё, что было после завершения последнего Хатма.
  * Повторное чтение в новом круге — норма и предупреждения не вызывает.
  */
-export function currentCycleReports(reports: ReportForOverlap[]): ReportForOverlap[] {
+export function currentCycleReports(reports: ReportForOverlap[], pagesBefore = 0): ReportForOverlap[] {
   const ordered = [...reports].sort(
     (a, b) => a.readOn.localeCompare(b.readOn) || a.createdAt.localeCompare(b.createdAt),
   );
-  const total = ordered.reduce((sum, r) => sum + r.pages, 0);
+  const total = ordered.reduce((sum, r) => sum + r.pages, pagesBefore);
   const threshold = Math.floor(total / QURAN_PAGES) * QURAN_PAGES;
-  if (threshold === 0) return ordered;
-  let cumulative = 0;
+  if (threshold === 0 || pagesBefore >= threshold) return ordered;
+  let cumulative = pagesBefore;
   for (let i = 0; i < ordered.length; i += 1) {
     cumulative += ordered[i].pages;
     if (cumulative >= threshold) return ordered.slice(i + 1);
@@ -46,9 +46,10 @@ export function findRangeOverlaps(
   start: number,
   end: number,
   reports: ReportForOverlap[],
+  pagesBefore = 0,
 ): RangeOverlap[] {
   const overlaps: RangeOverlap[] = [];
-  for (const r of currentCycleReports(reports)) {
+  for (const r of currentCycleReports(reports, pagesBefore)) {
     if (r.kind !== 'range' || r.startPage === null || r.endPage === null) continue;
     const overlapStart = Math.max(start, r.startPage);
     const overlapEnd = Math.min(end, r.endPage);

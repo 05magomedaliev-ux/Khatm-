@@ -78,6 +78,10 @@ export const memberUpdateSchema = z.object({
   displayName: memberName.optional(),
 });
 
+export const pagesBeforeSchema = z.object({
+  pages: z.number().int().min(0, 'Укажите число от 0.').max(QURAN_PAGES, `Не больше ${QURAN_PAGES} страниц.`),
+});
+
 export const addMemberSchema = z.object({ displayName: memberName });
 
 export const notificationsSchema = z.object({

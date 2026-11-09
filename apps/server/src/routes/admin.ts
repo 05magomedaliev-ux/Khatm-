@@ -4,11 +4,12 @@ import { randomBytes } from 'node:crypto';
 import type { Db } from '../db.js';
 import { inviteLink, type Deps } from '../http/app.js';
 import { forbidden, handle, HttpError, invalid, notFound } from '../http/errors.js';
-import { addMemberSchema, cardSchema, memberUpdateSchema, notificationsSchema, param, settingsSchema } from '../http/schemas.js';
+import { addMemberSchema, cardSchema, memberUpdateSchema, notificationsSchema, pagesBeforeSchema, param, settingsSchema } from '../http/schemas.js';
 import { currentUser } from '../http/telegramAuth.js';
-import { requireAdmin, requireMember } from '../services/access.js';
+import { isAdmin, requireAdmin, requireMember } from '../services/access.js';
 import { loadGroup, type GroupData } from '../services/analytics.js';
 import { RecipientUnavailable } from '../services/messenger.js';
+import { syncAchievements } from '../services/reports.js';
 
 const hhmm = (time: string) => time.slice(0, 5);
 
@@ -201,6 +202,25 @@ export function adminRoutes(router: Router, deps: Deps): void {
       );
     });
     res.status(204).end();
+  }));
+
+  router.patch('/groups/:gid/members/:mid/pages-before', handle(async (req, res) => {
+    const groupId = param(req, 'gid');
+    const memberId = param(req, 'mid');
+    const { pages } = pagesBeforeSchema.parse(req.body);
+    const user = currentUser(res);
+    const body = await database.withUser(user.id, async (db) => {
+      const me = await requireMember(db, groupId, user.id);
+      if (me.id !== memberId && !isAdmin(me)) throw forbidden('Изменить можно только своё значение.');
+      await db.query('select app.set_pages_before($1::uuid, $2::uuid, $3::int)', [groupId, memberId, pages]);
+      const data = await loadGroup(db, groupId);
+      const target = data?.members.find((m) => m.member.id === memberId);
+      if (!target) throw notFound('Участник не найден.');
+      await syncAchievements(db, target);
+      return { pagesBefore: target.stats.pagesBefore, totalPages: target.stats.totalPages };
+    });
+    res.json(body);
+    void deps.notifications.flushAchievements().catch((e) => console.error('Очередь достижений', e));
   }));
 
   router.post('/groups/:gid/link-code', handle(async (req, res) => {

@@ -25,6 +25,7 @@ export interface MemberRow {
   role: MemberRole;
   status: MemberStatus;
   started_on: string | null;
+  pages_before: number;
   username?: string | null;
   photo_url?: string | null;
 }
@@ -60,7 +61,7 @@ export async function loadGroup(db: Db, groupId: string, now: Date = new Date())
 
   const memberRows = (
     await db.query<MemberRow>(
-      `select m.id, m.group_id, m.user_id, m.display_name, m.role, m.status, m.started_on, u.username, u.photo_url
+      `select m.id, m.group_id, m.user_id, m.display_name, m.role, m.status, m.started_on, m.pages_before, u.username, u.photo_url
        from public.group_members m
        left join public.users u on u.id = m.user_id
        where m.group_id = $1 and m.status = 'active'
@@ -97,7 +98,7 @@ export async function loadGroup(db: Db, groupId: string, now: Date = new Date())
     return {
       member,
       ledger,
-      stats: computeStats(ledger, today),
+      stats: computeStats(ledger, today, member.pages_before),
       discipline: computeDiscipline(ledger),
       reportCount: reportCounts.get(member.id) ?? 0,
       statusToday: member.user_id === null ? 'not_joined' : (todayEntry?.status ?? 'none'),

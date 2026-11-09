@@ -34,7 +34,10 @@ export interface BestDay {
 }
 
 export interface MemberStats extends KhatmProgress {
+  /** Всё прочитанное, включая страницы до начала учёта. */
   totalPages: number;
+  /** Страницы до начала учёта: не влияют на долг, серии, темп и дисциплину. */
+  pagesBefore: number;
   averagePace: number;
   today: number;
   yesterday: number;
@@ -62,8 +65,9 @@ function sumLast(ledger: LedgerDay[], count: number): number {
   return ledger.slice(-count).reduce((sum, d) => sum + d.pages, 0);
 }
 
-export function computeStats(ledger: LedgerDay[], today: string): MemberStats {
-  const totalPages = ledger.reduce((sum, d) => sum + d.pages, 0);
+export function computeStats(ledger: LedgerDay[], today: string, pagesBefore = 0): MemberStats {
+  const trackedPages = ledger.reduce((sum, d) => sum + d.pages, 0);
+  const totalPages = trackedPages + pagesBefore;
   const progress = khatmProgress(totalPages);
   const todayEntry = ledger.find((d) => d.date === today);
   const yesterdayEntry = ledger.find((d) => d.date === addDays(today, -1));
@@ -71,7 +75,7 @@ export function computeStats(ledger: LedgerDay[], today: string): MemberStats {
 
   // Незавершённый день без страниц не занижает темп: отсутствие отчёта ещё ничего не значит.
   const elapsed = closed.length + (todayEntry && todayEntry.pages > 0 ? 1 : 0);
-  const averagePace = elapsed > 0 ? round1(totalPages / elapsed) : 0;
+  const averagePace = elapsed > 0 ? round1(trackedPages / elapsed) : 0;
 
   let bestStreak = 0;
   let run = 0;
@@ -93,6 +97,7 @@ export function computeStats(ledger: LedgerDay[], today: string): MemberStats {
   return {
     ...progress,
     totalPages,
+    pagesBefore,
     averagePace,
     today: todayEntry?.pages ?? 0,
     yesterday: yesterdayEntry?.pages ?? 0,

@@ -374,6 +374,47 @@ describe('Хатм: пять участников', { skip: !DATABASE_URL }, () 
     assert.equal((await outsider.call('GET', `/invites/${created.code}`)).status, 404);
   });
 
+  test('страницы до начала учёта: только свои, входят в итог, не трогают дисциплину', async () => {
+    const id = memberIds['Закария'];
+    const path = `/groups/${groupId}/members/${id}/pages-before`;
+    const before = (await members[2].call('GET', `/groups/${groupId}/members/${id}/profile`)).body.stats;
+    const scoreBefore = (await members[2].call('GET', `/groups/${groupId}/leaderboards`)).body.discipline.find((r: any) => r.name === 'Закария');
+
+    assert.equal((await members[1].call('PATCH', path, { pages: 50 })).status, 403, 'чужое значение менять нельзя');
+    assert.equal((await members[2].call('PATCH', path, { pages: 605 })).status, 422);
+    assert.equal((await outsider.call('PATCH', path, { pages: 1 })).status, 403);
+
+    const saved = await members[2].call('PATCH', path, { pages: 120 });
+    assert.equal(saved.status, 200);
+    assert.equal(saved.body.totalPages, before.totalPages + 120);
+
+    const after = (await members[2].call('GET', `/groups/${groupId}/members/${id}/profile`)).body;
+    assert.equal(after.stats.pagesBefore, 120);
+    assert.equal(after.stats.remaining, before.remaining - 120);
+    assert.equal(after.stats.averagePace, before.averagePace);
+    assert.equal(after.stats.debt, before.debt);
+    assert.equal(after.stats.currentStreak, before.currentStreak);
+    assert.equal(after.stats.bestDay.pages, before.bestDay.pages);
+    assert.ok(after.achievements.find((a: any) => a.code === 'pages_100').earnedAt, 'достижение учитывает прочитанное');
+
+    const scoreAfter = (await members[2].call('GET', `/groups/${groupId}/leaderboards`)).body.discipline.find((r: any) => r.name === 'Закария');
+    assert.equal(scoreAfter.score, scoreBefore.score);
+
+    const total = (await members[0].call('GET', `/groups/${groupId}/dashboard`)).body.progress.totalPages;
+    assert.equal((await members[0].call('PATCH', path, { pages: 0 })).status, 200, 'администратор может исправить');
+    assert.equal((await members[0].call('GET', `/groups/${groupId}/dashboard`)).body.progress.totalPages, total - 120);
+    const lost = (await members[2].call('GET', `/groups/${groupId}/members/${id}/profile`)).body;
+    assert.equal(lost.achievements.find((a: any) => a.code === 'pages_100').earnedAt, null);
+
+    const memberUser = (await members[1].call('GET', '/me')).body.user.id as string;
+    await assert.rejects(
+      h.database.withUser(memberUser, (db) => db.query('select app.set_pages_before($1::uuid, $2::uuid, 5)', [groupId, id])),
+      /not allowed/,
+    );
+    const direct = await h.database.withUser(memberUser, async (db) => (await db.query('update public.group_members set pages_before = 5 where id = $1', [id])).rowCount);
+    assert.equal(direct, 0, 'напрямую строку участника менять нельзя');
+  });
+
   test('новая группа независима, блокировка и удаление участника меняют цель', async () => {
     const newcomer = await outsider.call('POST', '/groups', { name: 'Вторая', timezone: 'Asia/Tashkent', dailyMinimum: 5, displayName: 'Гость' });
     assert.equal(newcomer.status, 201);

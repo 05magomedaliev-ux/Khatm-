@@ -4,7 +4,7 @@ import type { MemberRow } from './analytics.js';
 
 export async function requireMember(db: Db, groupId: string, userId: string): Promise<MemberRow> {
   const { rows } = await db.query<MemberRow>(
-    `select id, group_id, user_id, display_name, role, status, started_on
+    `select id, group_id, user_id, display_name, role, status, started_on, pages_before
      from public.group_members where group_id = $1 and user_id = $2`,
     [groupId, userId],
   );

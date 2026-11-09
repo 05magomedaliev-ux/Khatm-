@@ -50,7 +50,12 @@ export function ProfilePage({ memberId }: { memberId?: string }) {
       <p className="motivation centered">{data.motivation}</p>
 
       <div className="stat-grid">
-        <Stat label="Всего прочитано" value={`${number(stats.totalPages)} стр.`} icon={<TrendingUp size={15} />} />
+        <Stat
+          label="Всего прочитано"
+          value={`${number(stats.totalPages)} стр.`}
+          hint={stats.pagesBefore > 0 ? `Из них до учёта: ${stats.pagesBefore}` : undefined}
+          icon={<TrendingUp size={15} />}
+        />
         <Stat label="Текущий долг" value={`${stats.debt} стр.`} hint={stats.debt === 0 ? 'Долга нет' : 'Закрывается первым'} icon={<Target size={15} />} />
         <Stat label="Серия без пропуска" value={days(stats.currentStreak)} hint={`Лучшая: ${days(stats.bestStreak)}`} icon={<Flame size={15} />} />
         <Stat label="Дней с нормой" value={stats.completedDays} hint={`Из ${days(stats.trackedDays)} учёта`} icon={<CalendarCheck size={15} />} />

@@ -111,6 +111,21 @@ test('прогноз не строится без данных', () => {
   assert.equal(s.forecastDate, addDays('2026-03-05', Math.ceil(592 / 4)));
 });
 
+test('страницы до учёта идут в итог, но не в долг, темп и серии', () => {
+  const l = ledger({ '2026-03-02': 4, '2026-03-03': 4, '2026-03-04': 4 }, '2026-03-05');
+  const s = computeStats(l, '2026-03-05', 100);
+  assert.equal(s.totalPages, 112);
+  assert.equal(s.pagesBefore, 100);
+  assert.equal(s.pagesInCurrent, 112);
+  assert.equal(s.remaining, 492);
+  assert.equal(s.averagePace, 4);
+  assert.equal(s.debt, 0);
+  assert.equal(s.currentStreak, 3);
+  assert.equal(s.bestDay!.pages, 4);
+  assert.equal(s.forecastDate, addDays('2026-03-05', Math.ceil(492 / 4)));
+  assert.equal(computeStats([], '2026-03-05', 50).totalPages, 50);
+});
+
 test('рейтинг дисциплины: нет завершённых дней — нет рейтинга', () => {
   const d = computeDiscipline(ledger({ '2026-03-02': 10 }, '2026-03-02'));
   assert.equal(d.score, null);
@@ -155,6 +170,13 @@ test('новый круг после завершённого Хатма не в
   assert.equal(currentCycleReports(reports).length, 1);
   assert.equal(findRangeOverlaps(100, 110, reports).length, 0);
   assert.equal(findRangeOverlaps(3, 4, reports).length, 1);
+});
+
+test('страницы до учёта сдвигают границу круга чтения', () => {
+  const reports = [rep('a', 'range', 10, 1, 10, '2026-03-02'), rep('b', 'range', 5, 1, 5, '2026-03-03')];
+  assert.equal(currentCycleReports(reports, 594).length, 1, 'первый отчёт завершил Хатм');
+  assert.equal(currentCycleReports(reports, 604).length, 2, 'Хатм завершён ещё до учёта');
+  assert.equal(findRangeOverlaps(1, 3, reports, 0).length, 2);
 });
 
 test('достижения', () => {

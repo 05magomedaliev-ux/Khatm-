@@ -125,7 +125,8 @@ async function assertNoRepeat(
   if (input.confirmRepeat) return;
   let details: RepeatWarningDetails | null = null;
   if (shape.kind === 'range') {
-    const overlaps = findRangeOverlaps(shape.start!, shape.end!, await memberReports(db, memberId, excludeId));
+    const member = await db.query<{ pages_before: number }>('select pages_before from public.group_members where id = $1', [memberId]);
+    const overlaps = findRangeOverlaps(shape.start!, shape.end!, await memberReports(db, memberId, excludeId), member.rows[0]?.pages_before ?? 0);
     if (overlaps.length > 0) details = { reason: 'range_overlap', overlaps };
   } else if (!excludeId) {
     const { rows } = await db.query(

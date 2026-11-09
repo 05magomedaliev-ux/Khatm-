@@ -8,8 +8,12 @@ import { useApp } from '../lib/store';
 import { useApi } from '../lib/useApi';
 
 export function SettingsPage() {
-  const { groupId, me, membership, navigate, selectGroup, reloadMe, toast } = useApp();
+  const { groupId, me, membership, navigate, selectGroup, reloadMe, toast, bump, version } = useApp();
   const { data, error, loading, reload } = useApi(() => api.notifications(groupId), [groupId]);
+  const profile = useApi(() => api.profile(groupId, membership.memberId), [groupId, membership.memberId, version]);
+  const [pagesBefore, setPagesBefore] = useState('');
+  const [savingBefore, setSavingBefore] = useState(false);
+  const [beforeError, setBeforeError] = useState<string | null>(null);
   const [form, setForm] = useState<MemberNotificationSettings | null>(null);
   const [creating, setCreating] = useState(false);
   const [groupName, setGroupName] = useState('');
@@ -19,6 +23,27 @@ export function SettingsPage() {
   useEffect(() => {
     if (data) setForm(data);
   }, [data]);
+
+  useEffect(() => {
+    if (profile.data) setPagesBefore(String(profile.data.stats.pagesBefore));
+  }, [profile.data]);
+
+  const beforeValue = Number(pagesBefore);
+  const beforeValid = pagesBefore !== '' && Number.isInteger(beforeValue) && beforeValue >= 0 && beforeValue <= QURAN_PAGES;
+
+  async function savePagesBefore() {
+    setSavingBefore(true);
+    setBeforeError(null);
+    try {
+      await api.setPagesBefore(groupId, membership.memberId, beforeValue);
+      bump();
+      toast('Сохранено');
+    } catch (e) {
+      setBeforeError(e instanceof ApiError ? e.message : 'Не удалось сохранить.');
+    } finally {
+      setSavingBefore(false);
+    }
+  }
 
   async function save(patch: Partial<MemberNotificationSettings>) {
     if (!form) return;
@@ -67,6 +92,23 @@ export function SettingsPage() {
           </span>
         </button>
       )}
+
+      <Section title="Прочитано до начала учёта">
+        <p className="muted section-hint">Сколько страниц вы прочитали до подключения к приложению. Они войдут в общий итог и процент Хатма, но не повлияют на долг, серии, темп и рейтинг дисциплины.</p>
+        <div className="inline-form">
+          <input
+            inputMode="numeric"
+            aria-label="Страниц до начала учёта"
+            value={pagesBefore}
+            onChange={(e) => setPagesBefore(e.target.value.replace(/\D/g, '').slice(0, 3))}
+          />
+          <Button variant="quiet" busy={savingBefore} disabled={!beforeValid} onClick={savePagesBefore}>
+            Сохранить
+          </Button>
+        </div>
+        {!beforeValid && pagesBefore !== '' && <p className="form-error">Укажите число от 0 до {QURAN_PAGES}.</p>}
+        {beforeError && <p className="form-error" role="alert">{beforeError}</p>}
+      </Section>
 
       <Section title="Мои уведомления">
         {loading && !form && <Loading />}
@@ -131,6 +173,7 @@ export function SettingsPage() {
           <li>Лишние страницы сначала закрывают долг, затем идут в норму дня.</li>
           <li>Сегодняшний день предварительный: итог подводится после его окончания.</li>
           <li>Отчёты можно внести и исправить задним числом, долг пересчитается сам.</li>
+          <li>Страницы, прочитанные до начала учёта, идут только в общий итог и процент Хатма.</li>
         </ul>
       </Section>
     </Screen>
